@@ -1,4 +1,4 @@
-{
+7{
   "dependencies": {
     "body-parser": "^2.2.2",
     "cors": "^2.8.6",
@@ -18,5 +18,8 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "type": "commonjs",
+  "engines": {
+  "node": ">=18.0.0"
+}
 }
