@@ -113,13 +113,15 @@ app.put("/update-password", (req, res) => {
 app.post("/sync-contacts", (req, res) => {
   const { contacts } = req.body;
 
-  const matched = contacts
-    .map(hash => phoneHashMap.get(hash))
-    .filter(Boolean);
+  console.log("Incoming:", contacts);
+
+  const matched = users.filter(u =>
+    contacts.includes(u.phoneHash) ||
+    contacts.includes(hashNumber(u.phoneNumber))
+  );
 
   res.json({ matched_users: matched });
 });
-
 // ================= GROUP =================
 
 app.post("/onechat/create-group", (req, res) => {
@@ -134,6 +136,24 @@ app.post("/onechat/create-group", (req, res) => {
   groups.push(newGroup);
 
   res.status(201).json({ message: "Group created" });
+});
+
+
+app.post("/find-user", (req, res) => {
+  const { phoneNumber } = req.body;
+
+  const formatted = formatToE164(phoneNumber);
+  if (!formatted) {
+    return res.status(400).json({ error: "Invalid number" });
+  }
+
+  const user = users.find(u => u.phoneNumber === formatted);
+
+  if (!user) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  res.json({ user });
 });
 
 // ================= WEBSOCKET =================
