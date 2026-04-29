@@ -4,6 +4,8 @@ const cors = require("cors");
 const { WebSocketServer } = require("ws");
 const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
+const crypto = require("crypto");
 
 const app = express();
 app.use(cors());
@@ -15,7 +17,19 @@ const JWT_SECRET = "onechat_secret";
 // ====== FAKE DATABASE (Replace with MongoDB later) ======
 let users = [];
 let groups = [];
+let phoneHashMap = new Map();
 let userSockets = {}; // phoneNumber -> WebSocket
+
+//======= PHONE NUMBER INDIAN CODE======
+function formatToE164 (number) {
+    const phone = parsePhoneNumberFromString(number,'IN');
+    return phone ? phone.number : null;
+}
+
+//======= PHONE NUMBER HASHING LOGIC=====
+function hashNumber(num) {
+  return crypto.createHash("sha256").update(num).digest("hex");
+}
 
 // ================= AUTH APIs =================
 
@@ -27,16 +41,27 @@ app.post("/signup", (req, res) => {
     return res.status(400).json({ error: "Email already exists" });
   }
 
+  const formattedNumber = formatToE164(phoneNumber);
+  if (!formattedNumber) {
+    return res.status(400).json({ error: "Invalid phone number" });
+  }
+
+  const phoneHash = hashNumber(formattedNumber);
+
   const newUser = {
     id: users.length + 1,
     userName,
     email,
-    phoneNumber,
+    phoneNumber: formattedNumber,
+    phoneHash,
     dob,
     password
   };
 
   users.push(newUser);
+
+  // ✅ correct map insert
+  phoneHashMap.set(phoneHash, newUser);
 
   res.status(201).json({ message: "User created" });
 });
@@ -88,7 +113,9 @@ app.put("/update-password", (req, res) => {
 app.post("/sync-contacts", (req, res) => {
   const { contacts } = req.body;
 
-  const matched = users.filter(u => contacts.includes(u.phoneNumber));
+  const matched = contacts
+    .map(hash => phoneHashMap.get(hash))
+    .filter(Boolean);
 
   res.json({ matched_users: matched });
 });
