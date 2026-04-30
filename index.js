@@ -85,20 +85,24 @@ app.post("/login", (req, res) => {
 
 // SYNC MULTIPLE CONTACTS
 app.post("/sync-contacts", (req, res) => {
-  const { contacts } = req.body; // Expecting ["9876543210", "1234567890"]
+  const { contacts } = req.body;
 
   if (!contacts || !Array.isArray(contacts)) {
-    return res.status(400).json({ error: "Invalid contacts format" });
+    return res.status(400).json({ error: "Invalid format" });
   }
 
-  const incomingCleaned = contacts.map(c => scrub(c));
-  
-  const matched = users.filter(u => 
-    incomingCleaned.includes(u.phoneNumber)
-  );
+  // Ensure every incoming number is ONLY digits
+  const cleanIncoming = contacts.map(c => String(c).replace(/\D/g, ''));
 
+  const matched = users.filter(u => {
+    const userPhone = String(u.phoneNumber).replace(/\D/g, '');
+    return cleanIncoming.includes(userPhone);
+  });
+
+  console.log(`Sync Request: Received ${contacts.length}, Matched ${matched.length}`);
   res.json({ matched_users: matched });
 });
+
 
 // FIND SINGLE USER (Used by "Find by Number" in Flutter)
 app.post("/find-user", (req, res) => {
