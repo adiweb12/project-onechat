@@ -1,3 +1,7 @@
+const jwt = require("jsonwebtoken");
+
+const JWT_SECRET = "onechat_secret"; // must match index.js
+
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
@@ -9,9 +13,11 @@ const authenticate = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; // contains { id }
+    req.user = decoded; // { id }
     next();
   } catch (err) {
     return res.status(401).json({ error: "Invalid token" });
   }
 };
+
+module.exports = authenticate;
