@@ -4,7 +4,6 @@ const cors = require("cors");
 const { WebSocketServer } = require("ws");
 const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
-const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const crypto = require("crypto");
 
 const app = express();
@@ -14,57 +13,53 @@ app.use(bodyParser.json());
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = "onechat_secret";
 
-// ====== FAKE DATABASE (Replace with MongoDB later) ======
+// ====== FAKE DATABASE (Resets on every Render deploy/restart) ======
 let users = [];
 let groups = [];
-let phoneHashMap = new Map();
 let userSockets = {}; // phoneNumber -> WebSocket
 
-//======= PHONE NUMBER INDIAN CODE======
-function formatToE164(number) {
-    if (!number || typeof number !== 'string') return null; // FIX: Prevents the TypeError crash
-    const phone = parsePhoneNumberFromString(number, 'IN');
-    return phone ? phone.number : null;
-}
+// ======= HELPER FUNCTIONS =======
 
-const scrub = (num) => String(num).replace(/\D/g, '');
-
-
+/**
+ * Removes all non-digit characters from a string.
+ * Ensures "+91 98765-43210" becomes "919876543210"
+ */
+const scrub = (num) => {
+  if (!num) return "";
+  return String(num).replace(/\D/g, '');
+};
 
 // ================= AUTH APIs =================
 
 // SIGNUP
-// Helper to keep only digits
-const scrub = (num) => String(num).replace(/\D/g, '');
-
-// 1. Updated Signup (Store the cleaned number)
 app.post("/signup", (req, res) => {
-  const { userName, phoneNumber, email, password } = req.body;
+  const { userName, phoneNumber, email, dob, password } = req.body;
+  
+  if (!phoneNumber || !email) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
   const cleanPhone = scrub(phoneNumber);
+
+  // Check if user already exists
+  if (users.find(u => u.email === email || u.phoneNumber === cleanPhone)) {
+    return res.status(400).json({ error: "User already exists" });
+  }
 
   const newUser = {
     id: users.length + 1,
     userName,
-    phoneNumber: cleanPhone, // Save as "9876543210"
     email,
+    phoneNumber: cleanPhone, 
+    dob,
     password
   };
 
   users.push(newUser);
+  console.log(`User Registered: ${userName} (${cleanPhone})`);
+  
   res.status(201).json({ message: "User created" });
 });
-
-// 2. Updated Sync/Find Route
-app.post("/sync-contacts", (req, res) => {
-  const { contacts } = req.body; // Expecting ["9876543210", "1234567890"]
-  
-  const matched = users.filter(u => 
-    contacts.map(c => scrub(c)).includes(u.phoneNumber)
-  );
-
-  res.json({ matched_users: matched });
-});
-
 
 // LOGIN
 app.post("/login", (req, res) => {
@@ -86,18 +81,57 @@ app.post("/login", (req, res) => {
   });
 });
 
-// UPDATE EMAIL
+// ================= CONTACT SYSTEM =================
+
+// SYNC MULTIPLE CONTACTS
+app.post("/sync-contacts", (req, res) => {
+  const { contacts } = req.body; // Expecting ["9876543210", "1234567890"]
+
+  if (!contacts || !Array.isArray(contacts)) {
+    return res.status(400).json({ error: "Invalid contacts format" });
+  }
+
+  const incomingCleaned = contacts.map(c => scrub(c));
+  
+  const matched = users.filter(u => 
+    incomingCleaned.includes(u.phoneNumber)
+  );
+
+  res.json({ matched_users: matched });
+});
+
+// FIND SINGLE USER (Used by "Find by Number" in Flutter)
+app.post("/find-user", (req, res) => {
+  const { contacts } = req.body; 
+
+  if (!contacts || contacts.length === 0) {
+    return res.status(400).json({ error: "No contact provided" });
+  }
+
+  const searchNumber = scrub(contacts[0]);
+  const foundUser = users.find(u => u.phoneNumber === searchNumber);
+
+  if (!foundUser) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  // Returning in matched_users array to keep Flutter parsing consistent
+  res.json({ matched_users: [foundUser] }); 
+});
+
+// ================= PROFILE UPDATES =================
+
 app.put("/update-email", (req, res) => {
   const { phoneNumber, newEmail } = req.body;
+  const cleanPhone = scrub(phoneNumber);
 
-  const user = users.find(u => u.phoneNumber === phoneNumber);
+  const user = users.find(u => u.phoneNumber === cleanPhone);
   if (!user) return res.status(404).json({ error: "User not found" });
 
   user.email = newEmail;
   res.json({ message: "Email updated" });
 });
 
-// UPDATE PASSWORD
 app.put("/update-password", (req, res) => {
   const { email, newPassword } = req.body;
 
@@ -108,8 +142,7 @@ app.put("/update-password", (req, res) => {
   res.json({ message: "Password updated" });
 });
 
-
-// ================= GROUP =================
+// ================= GROUP MANAGEMENT =================
 
 app.post("/onechat/create-group", (req, res) => {
   const { groupName, members } = req.body;
@@ -121,35 +154,10 @@ app.post("/onechat/create-group", (req, res) => {
   };
 
   groups.push(newGroup);
-
   res.status(201).json({ message: "Group created" });
 });
 
-
-// 2. Update the find-user route to match your Flutter payload
-app.post("/find-user", (req, res) => {
-  const { contacts } = req.body; // Flutter sends {"contacts": ["hash123"]}
-
-  if (!contacts || contacts.length === 0) {
-    return res.status(400).json({ error: "No contact provided" });
-  }
-
-  const incomingHash = contacts[0];
-
-  // Search the users array for a matching phoneHash
-  const foundUser = users.find(u => u.phoneHash === incomingHash);
-
-  if (!foundUser) {
-    return res.status(404).json({ error: "User not found" });
-  }
-
-  // Wrap in matched_users so Flutter's List parsing works
-  res.json({ matched_users: [foundUser] }); 
-});
-
-
-
-// ================= WEBSOCKET =================
+// ================= WEBSOCKET LOGIC =================
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
@@ -158,51 +166,39 @@ const server = app.listen(PORT, () => {
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws) => {
-  console.log("Client connected");
+  console.log("WS Client connected");
 
   ws.on("message", (data) => {
     try {
       const msg = JSON.parse(data.toString());
 
-      /**
-       msg format expected:
-       {
-         type: "register" | "message",
-         from: "phone",
-         to: "phone",
-         message: "hello"
-       }
-      */
-
       // REGISTER USER SOCKET
       if (msg.type === "register") {
         userSockets[msg.from] = ws;
-        console.log("Registered:", msg.from);
+        console.log("Socket Registered for:", msg.from);
         return;
       }
 
       // SEND MESSAGE
       if (msg.type === "message") {
         const receiverSocket = userSockets[msg.to];
-
         if (receiverSocket) {
           receiverSocket.send(JSON.stringify(msg));
         }
       }
-
     } catch (err) {
-      console.log("Error:", err);
+      console.log("WS Error:", err);
     }
   });
 
   ws.on("close", () => {
-    // Remove disconnected user
     for (let key in userSockets) {
       if (userSockets[key] === ws) {
         delete userSockets[key];
         break;
       }
     }
-    console.log("Client disconnected");
+    console.log("WS Client disconnected");
   });
 });
+w
