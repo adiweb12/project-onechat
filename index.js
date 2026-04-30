@@ -6,13 +6,13 @@ const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const authenticate = require("./middleware/jwt_manager");
+const { JWT_SECRET } = require("./configs/config");
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = "onechat_secret";
 
 // ====== FAKE DATABASE (Resets on every Render deploy/restart) ======
 let users = [];
