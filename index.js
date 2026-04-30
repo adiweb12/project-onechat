@@ -27,50 +27,44 @@ function formatToE164(number) {
     return phone ? phone.number : null;
 }
 
-//======= PHONE NUMBER HASHING LOGIC=====
-// Add this helper to make sure we always hash the same way
-// Add this helper to make sure we always hash the same way
-function hashNumber(num) {
-  // Strip everything except digits to be 100% safe
-  const cleanNum = num.replace(/\D/g, ''); 
-  return crypto.createHash("sha256").update(cleanNum).digest("hex");
-}
+const scrub = (num) => String(num).replace(/\D/g, '');
+
 
 
 // ================= AUTH APIs =================
 
 // SIGNUP
+// Helper to keep only digits
+const scrub = (num) => String(num).replace(/\D/g, '');
+
+// 1. Updated Signup (Store the cleaned number)
 app.post("/signup", (req, res) => {
-  const { userName, email, phoneNumber, dob, password } = req.body;
-
-  if (users.find(u => u.email === email)) {
-    return res.status(400).json({ error: "Email already exists" });
-  }
-
-  const formattedNumber = formatToE164(phoneNumber);
-  if (!formattedNumber) {
-    return res.status(400).json({ error: "Invalid phone number" });
-  }
-
-  const phoneHash = hashNumber(formattedNumber);
+  const { userName, phoneNumber, email, password } = req.body;
+  const cleanPhone = scrub(phoneNumber);
 
   const newUser = {
     id: users.length + 1,
     userName,
+    phoneNumber: cleanPhone, // Save as "9876543210"
     email,
-    phoneNumber: formattedNumber,
-    phoneHash,
-    dob,
     password
   };
 
   users.push(newUser);
-
-  // ✅ correct map insert
-  phoneHashMap.set(phoneHash, newUser);
-
   res.status(201).json({ message: "User created" });
 });
+
+// 2. Updated Sync/Find Route
+app.post("/sync-contacts", (req, res) => {
+  const { contacts } = req.body; // Expecting ["9876543210", "1234567890"]
+  
+  const matched = users.filter(u => 
+    contacts.map(c => scrub(c)).includes(u.phoneNumber)
+  );
+
+  res.json({ matched_users: matched });
+});
+
 
 // LOGIN
 app.post("/login", (req, res) => {
@@ -114,20 +108,7 @@ app.put("/update-password", (req, res) => {
   res.json({ message: "Password updated" });
 });
 
-// ================= CONTACT SYNC =================
 
-app.post("/sync-contacts", (req, res) => {
-  const { contacts } = req.body;
-
-  console.log("Incoming:", contacts);
-
-  const matched = users.filter(u =>
-    contacts.includes(u.phoneHash) ||
-    contacts.includes(hashNumber(u.phoneNumber))
-  );
-
-  res.json({ matched_users: matched });
-});
 // ================= GROUP =================
 
 app.post("/onechat/create-group", (req, res) => {
