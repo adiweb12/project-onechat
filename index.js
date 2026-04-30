@@ -5,6 +5,7 @@ const { WebSocketServer } = require("ws");
 const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
+const jwt_manager = require("middleware/jwt_manager.js");
 
 const app = express();
 app.use(cors());
@@ -143,25 +144,32 @@ app.post("/find-user", (req, res) => {
 
 // ================= PROFILE UPDATES =================
 
-app.put("/update-email", (req, res) => {
-  const { phoneNumber, newEmail } = req.body;
-  const cleanPhone = scrub(phoneNumber);
+app.put("/update-email", authenticate, (req, res) => {
+  const { newEmail } = req.body;
 
-  const user = users.find(u => u.phoneNumber === cleanPhone);
-  if (!user) return res.status(404).json({ error: "User not found" });
+  const user = users.find(u => u.id === req.user.id);
+
+  if (!user) {
+    return res.status(404).json({ error: "User not found" });
+  }
 
   user.email = newEmail;
-  res.json({ message: "Email updated" });
+
+  res.json({ message: "Email updated successfully" });
 });
 
-app.put("/update-password", (req, res) => {
-  const { email, newPassword } = req.body;
+app.put("/update-password", authenticate, (req, res) => {
+  const { newPassword } = req.body;
 
-  const user = users.find(u => u.email === email);
-  if (!user) return res.status(404).json({ error: "User not found" });
+  const user = users.find(u => u.id === req.user.id);
+
+  if (!user) {
+    return res.status(404).json({ error: "User not found" });
+  }
 
   user.password = newPassword;
-  res.json({ message: "Password updated" });
+
+  res.json({ message: "Password updated successfully" });
 });
 
 // ================= GROUP MANAGEMENT =================
