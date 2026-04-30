@@ -28,8 +28,11 @@ function formatToE164(number) {
 }
 
 //======= PHONE NUMBER HASHING LOGIC=====
+// Add this helper to make sure we always hash the same way
 function hashNumber(num) {
-  return crypto.createHash("sha256").update(num).digest("hex");
+  // Strip everything except digits to be 100% safe
+  const cleanNum = num.replace(/\D/g, ''); 
+  return crypto.createHash("sha256").update(cleanNum).digest("hex");
 }
 
 // ================= AUTH APIs =================
