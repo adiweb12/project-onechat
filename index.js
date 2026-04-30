@@ -142,25 +142,26 @@ app.post("/onechat/create-group", (req, res) => {
 
 // 2. Update the find-user route to match your Flutter payload
 app.post("/find-user", (req, res) => {
-  // Your Flutter app is sending {"contacts": [hashedNumber]}
+  // 1. Get the hash from the 'contacts' list sent by Flutter
   const { contacts } = req.body;
 
   if (!contacts || !Array.isArray(contacts) || contacts.length === 0) {
-    return res.status(400).json({ error: "No contact provided" });
+    return res.status(400).json({ error: "No hash provided" });
   }
 
   const searchHash = contacts[0];
 
-  // Search the users array for a matching hash
+  // 2. Look for the user using the phoneHash
   const user = users.find(u => u.phoneHash === searchHash);
 
   if (!user) {
     return res.status(404).json({ error: "User not found" });
   }
 
-  // Return inside a 'matched_users' list to match your Flutter logic
+  // 3. Wrap it in 'matched_users' so Flutter's List parsing works
   res.json({ matched_users: [user] }); 
 });
+
 
 // ================= WEBSOCKET =================
 
