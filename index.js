@@ -17,6 +17,7 @@ app.use(bodyParser.json());
 // ====== FAKE DATABASE (Resets on every Render deploy/restart) ======
 let users = [];
 let groups = [];
+let messages = [];
 let userSockets = {}; // phoneNumber -> WebSocket
 
 // ======= HELPER FUNCTIONS =======
@@ -165,7 +166,7 @@ app.put("/update-password", authenticate, (req, res) => {
 
   const user = users.find(u => u.id === req.user.id);
   
-  if(!passSecurityChecker){
+  if(!passSecurityChecker(newPassword)){
       return res.status(400).json({ error: "Password must contain uppercase, lowercase, number and special character"});
   }
 
@@ -193,6 +194,16 @@ app.post("/onechat/create-group", (req, res) => {
   res.status(201).json({ message: "Group created" });
 });
 
+app.get("/messages/:phone", (req, res) => {
+  const phone = req.params.phone;
+
+  const userMessages = messages.filter(
+    m => m.from === phone || m.to === phone
+  );
+
+  res.json(userMessages);
+});
+
 // ================= WEBSOCKET LOGIC =================
 
 const server = app.listen(PORT, () => {
@@ -217,11 +228,27 @@ wss.on("connection", (ws) => {
 
       // SEND MESSAGE
       if (msg.type === "message") {
-        const receiverSocket = userSockets[msg.to];
-        if (receiverSocket) {
-          receiverSocket.send(JSON.stringify(msg));
-        }
-      }
+  const newMsg = {
+    id: uuidv4(),
+    from: msg.from,
+    to: msg.to,
+    message: msg.message,
+    time: new Date().toISOString()
+  };
+
+  messages.push(newMsg);
+
+  const receiverSocket = userSockets[msg.to];
+  const senderSocket = userSockets[msg.from];
+
+  if (receiverSocket) {
+    receiverSocket.send(JSON.stringify(newMsg));
+  }
+
+  if (senderSocket) {
+    senderSocket.send(JSON.stringify(newMsg)); // ✅ ACK
+  }
+}
     } catch (err) {
       console.log("WS Error:", err);
     }
