@@ -120,7 +120,7 @@ app.post("/sync-contacts", (req, res) => {
   console.log(`Fast Sync: Scanned ${contacts.length}, Matched ${uniqueMatched.length}`);
   res.json({ matched_users: uniqueMatched });
 });
-w
+
 
 // FIND SINGLE USER (Used by "Find by Number" in Flutter)
 app.post("/find-user", (req, res) => {
