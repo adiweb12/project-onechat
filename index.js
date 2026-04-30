@@ -29,11 +29,13 @@ function formatToE164(number) {
 
 //======= PHONE NUMBER HASHING LOGIC=====
 // Add this helper to make sure we always hash the same way
+// Add this helper to make sure we always hash the same way
 function hashNumber(num) {
   // Strip everything except digits to be 100% safe
   const cleanNum = num.replace(/\D/g, ''); 
   return crypto.createHash("sha256").update(cleanNum).digest("hex");
 }
+
 
 // ================= AUTH APIs =================
 
@@ -145,25 +147,25 @@ app.post("/onechat/create-group", (req, res) => {
 
 // 2. Update the find-user route to match your Flutter payload
 app.post("/find-user", (req, res) => {
-  // 1. Get the hash from the 'contacts' list sent by Flutter
-  const { contacts } = req.body;
+  const { contacts } = req.body; // Flutter sends {"contacts": ["hash123"]}
 
-  if (!contacts || !Array.isArray(contacts) || contacts.length === 0) {
-    return res.status(400).json({ error: "No hash provided" });
+  if (!contacts || contacts.length === 0) {
+    return res.status(400).json({ error: "No contact provided" });
   }
 
-  const searchHash = contacts[0];
+  const incomingHash = contacts[0];
 
-  // 2. Look for the user using the phoneHash
-  const user = users.find(u => u.phoneHash === searchHash);
+  // Search the users array for a matching phoneHash
+  const foundUser = users.find(u => u.phoneHash === incomingHash);
 
-  if (!user) {
+  if (!foundUser) {
     return res.status(404).json({ error: "User not found" });
   }
 
-  // 3. Wrap it in 'matched_users' so Flutter's List parsing works
-  res.json({ matched_users: [user] }); 
+  // Wrap in matched_users so Flutter's List parsing works
+  res.json({ matched_users: [foundUser] }); 
 });
+
 
 
 // ================= WEBSOCKET =================
