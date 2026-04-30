@@ -5,7 +5,7 @@ const { WebSocketServer } = require("ws");
 const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
-const jwt_manager = require("middleware/jwt_manager.js");
+const authenticate = require("./middleware/jwt_manager");
 
 const app = express();
 app.use(cors());
