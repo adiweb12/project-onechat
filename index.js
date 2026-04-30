@@ -7,12 +7,12 @@ const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const authenticate = require("./middleware/jwt_manager");
 const { JWT_SECRET } = require("./configs/config");
+const passSecurityChecker = require("./security/passManager");
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
 
 // ====== FAKE DATABASE (Resets on every Render deploy/restart) ======
 let users = [];
@@ -32,12 +32,16 @@ const scrub = (num) => {
 
 // ================= AUTH APIs =================
 
-// SIGNUP
+//======= SIGNUP ===========
 app.post("/signup", (req, res) => {
   const { userName, phoneNumber, email, dob, password } = req.body;
   
-  if (!phoneNumber || !email) {
+  if (!phoneNumber || !email || !password || !userName || !dob) {
     return res.status(400).json({ error: "Missing required fields" });
+  }
+  
+  if(!passSecurityChecker(password)){
+      return res.status(400).json({ error: "Password must contain uppercase, lowercase, number and special character"});
   }
 
   const cleanPhone = scrub(phoneNumber);
@@ -62,14 +66,14 @@ app.post("/signup", (req, res) => {
   res.status(201).json({ message: "User created" });
 });
 
-// LOGIN
+//============= LOGIN ===========
 app.post("/login", (req, res) => {
   const { email, password } = req.body;
 
   const user = users.find(u => u.email === email && u.password === password);
 
   if (!user) {
-    return res.status(401).json({ error: "Invalid credentials" });
+    return res.status(401).json({ error: "Invalid credentials or User not Found" });
   }
 
   const access_token = jwt.sign({ id: user.id }, JWT_SECRET);
@@ -82,9 +86,7 @@ app.post("/login", (req, res) => {
   });
 });
 
-// ================= CONTACT SYSTEM =================
-
-// SYNC MULTIPLE CONTACTS
+//======= SYNC MULTIPLE CONTACTS ======
 app.post("/sync-contacts", (req, res) => {
   const { contacts } = req.body;
 
@@ -123,7 +125,7 @@ app.post("/sync-contacts", (req, res) => {
 });
 
 
-// FIND SINGLE USER (Used by "Find by Number" in Flutter)
+//=========== FIND SINGLE USER =========
 app.post("/find-user", (req, res) => {
   const { contacts } = req.body; 
 
@@ -142,7 +144,7 @@ app.post("/find-user", (req, res) => {
   res.json({ matched_users: [foundUser] }); 
 });
 
-// ================= PROFILE UPDATES =================
+// ======== EMAIL UPDATES ============
 
 app.put("/update-email", authenticate, (req, res) => {
   const { newEmail } = req.body;
@@ -157,11 +159,15 @@ app.put("/update-email", authenticate, (req, res) => {
 
   res.json({ message: "Email updated successfully" });
 });
-
+//=========== PASSWORD UPDATE =========
 app.put("/update-password", authenticate, (req, res) => {
   const { newPassword } = req.body;
 
   const user = users.find(u => u.id === req.user.id);
+  
+  if(!passSecurityChecker){
+      return res.status(400).json({ error: "Password must contain uppercase, lowercase, number and special character"});
+  }
 
   if (!user) {
     return res.status(404).json({ error: "User not found" });
