@@ -21,8 +21,9 @@ let phoneHashMap = new Map();
 let userSockets = {}; // phoneNumber -> WebSocket
 
 //======= PHONE NUMBER INDIAN CODE======
-function formatToE164 (number) {
-    const phone = parsePhoneNumberFromString(number,'IN');
+function formatToE164(number) {
+    if (!number || typeof number !== 'string') return null; // FIX: Prevents the TypeError crash
+    const phone = parsePhoneNumberFromString(number, 'IN');
     return phone ? phone.number : null;
 }
 
