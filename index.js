@@ -6,7 +6,7 @@ const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const authenticate = require("./middleware/jwt_manager");
-const { JWT_SECRET } = require("./configs/config");
+const { JWT_SECRET , PORT } = require("./configs/config");
 const passSecurityChecker = require("./security/passManager");
 
 const app = express();
