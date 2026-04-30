@@ -91,18 +91,36 @@ app.post("/sync-contacts", (req, res) => {
     return res.status(400).json({ error: "Invalid format" });
   }
 
-  // Ensure every incoming number is ONLY digits
-  const cleanIncoming = contacts.map(c => String(c).replace(/\D/g, ''));
+  // Helper to get only the last 10 digits of a number
+  const getLast10 = (num) => {
+    const cleaned = String(num).replace(/\D/g, '');
+    return cleaned.slice(-10);
+  };
 
-  const matched = users.filter(u => {
-    const userPhone = String(u.phoneNumber).replace(/\D/g, '');
-    return cleanIncoming.includes(userPhone);
+  // Create a Map of the last 10 digits to the actual user object for instant lookup
+  const userMap = new Map();
+  users.forEach(u => {
+    const last10 = getLast10(u.phoneNumber);
+    if (last10.length === 10) {
+      userMap.set(last10, u);
+    }
   });
 
-  console.log(`Sync Request: Received ${contacts.length}, Matched ${matched.length}`);
-  res.json({ matched_users: matched });
-});
+  const matched = [];
+  contacts.forEach(contactNum => {
+    const contactLast10 = getLast10(contactNum);
+    if (userMap.has(contactLast10)) {
+      matched.push(userMap.get(contactLast10));
+    }
+  });
 
+  // Remove duplicates from matches
+  const uniqueMatched = [...new Map(matched.map(item => [item.id, item])).values()];
+
+  console.log(`Fast Sync: Scanned ${contacts.length}, Matched ${uniqueMatched.length}`);
+  res.json({ matched_users: uniqueMatched });
+});
+w
 
 // FIND SINGLE USER (Used by "Find by Number" in Flutter)
 app.post("/find-user", (req, res) => {
