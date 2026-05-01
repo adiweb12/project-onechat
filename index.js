@@ -229,24 +229,23 @@ wss.on("connection", (ws) => {
       // SEND MESSAGE
       if (msg.type === "message") {
   const newMsg = {
-    id: uuidv4(),
+    id: msg.id || uuidv4(),
     from: msg.from,
     to: msg.to,
     message: msg.message,
     time: new Date().toISOString()
   };
 
+  // ❗ prevent duplicate by id
+  const exists = messages.find(m => m.id === newMsg.id);
+  if (exists) return;
+
   messages.push(newMsg);
 
   const receiverSocket = userSockets[msg.to];
-  const senderSocket = userSockets[msg.from];
 
   if (receiverSocket) {
     receiverSocket.send(JSON.stringify(newMsg));
-  }
-
-  if (senderSocket) {
-    senderSocket.send(JSON.stringify(newMsg)); // ✅ ACK
   }
 }
     } catch (err) {
