@@ -286,6 +286,12 @@ wss.on("connection", (ws) => {
 
       // SEND MESSAGE
       if (msg.type === "message") {
+        const decoded = jwt.verify(msg.token, JWT_SECRET);
+const user = users.find(u => u.id === decoded.id);
+
+if (!user || user.phoneNumber !== msg.from) {
+  return; // ❌ BLOCK FAKE
+}
   const senderUser = users.find(u => u.phoneNumber === msg.from);
 
   const newMsg = {
