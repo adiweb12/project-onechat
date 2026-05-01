@@ -286,15 +286,17 @@ wss.on("connection", (ws) => {
 
       // SEND MESSAGE
       if (msg.type === "message") {
+  const senderUser = users.find(u => u.phoneNumber === msg.from);
+
   const newMsg = {
     id: msg.id || uuidv4(),
     from: msg.from,
     to: msg.to,
     message: msg.message,
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
+    senderName: senderUser ? senderUser.userName : msg.from // ✅ ADD
   };
 
-  // ❗ prevent duplicate by id
   const exists = messages.find(m => m.id === newMsg.id);
   if (exists) return;
 
