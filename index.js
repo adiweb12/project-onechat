@@ -270,10 +270,19 @@ wss.on("connection", (ws) => {
 
       // REGISTER USER SOCKET
       if (msg.type === "register") {
-        userSockets[msg.from] = ws;
-        console.log("Socket Registered for:", msg.from);
-        return;
-      }
+  try {
+    const decoded = jwt.verify(msg.token, JWT_SECRET);
+    const user = users.find(u => u.id === decoded.id);
+
+    if (!user) return;
+
+    userSockets[user.phoneNumber] = ws;
+    console.log("Secure WS Registered:", user.phoneNumber);
+  } catch (err) {
+    console.log("Invalid token");
+    ws.close();
+  }
+}
 
       // SEND MESSAGE
       if (msg.type === "message") {
