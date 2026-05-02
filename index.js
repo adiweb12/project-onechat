@@ -294,14 +294,15 @@ if (!user || user.phoneNumber !== msg.from) {
 }
   const senderUser = users.find(u => u.phoneNumber === msg.from);
 
-  const newMsg = {
-    id: msg.id || uuidv4(),
+  // Inside wss.on("message", ...) for type === "message"
+const newMsg = {
+    id: msg.id || uuidv4(), // Use Flutter's ID or generate one
     from: msg.from,
     to: msg.to,
     message: msg.message,
-    time: new Date().toISOString(),
-    senderName: senderUser ? senderUser.userName : msg.from // ✅ ADD
-  };
+    time: new Date().toISOString(), // Server-authoritative time
+};
+
 
   const exists = messages.find(m => m.id === newMsg.id);
   if (exists) return;
@@ -309,10 +310,9 @@ if (!user || user.phoneNumber !== msg.from) {
   messages.push(newMsg);
 
   const receiverSocket = userSockets[msg.to];
-
-  if (receiverSocket) {
+if (receiverSocket) {
     receiverSocket.send(JSON.stringify(newMsg));
-  }
+}
 }
     } catch (err) {
       console.log("WS Error:", err);
