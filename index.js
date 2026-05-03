@@ -6,49 +6,55 @@ const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const authenticate = require("./middleware/jwt_manager");
-const { JWT_SECRET , PORT } = require("./configs/config");
+const { JWT_SECRET, PORT } = require("./configs/config");
 const passSecurityChecker = require("./security/passManager");
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+// ===================================================================
+//  IN-MEMORY STORE  (replace with PostgreSQL / MongoDB in production)
+// ===================================================================
+let users = [];      // { id, userName, email, phoneNumber, dob, passwordHash }
+let messages = [];   // { id, from, to, message, time, msgType, status }
+let userSockets = {}; // phoneNumber → WebSocket
 
-// ====== FAKE DATABASE (Resets on every Render deploy/restart) ======
-let users = [];
-let groups = [];
-let messages = [];
-let userSockets = {}; // phoneNumber -> WebSocket
+// ── Helpers ─────────────────────────────────────────────────────────
 
-// ======= HELPER FUNCTIONS =======
+const scrub = (num) => num ? String(num).replace(/\D/g, "") : "";
+const getLast10 = (num) => String(num).replace(/\D/g, "").slice(-10);
 
-/**
- * Removes all non-digit characters from a string.
- * Ensures "+91 98765-43210" becomes "919876543210"
- */
-const scrub = (num) => {
-  if (!num) return "";
-  return String(num).replace(/\D/g, '');
-};
+/** Hash a password with SHA-256 + app salt */
+function hashPassword(plain) {
+  return crypto
+    .createHmac("sha256", JWT_SECRET)
+    .update(plain)
+    .digest("hex");
+}
 
-// ================= AUTH APIs =================
+// ===================================================================
+//  AUTH ROUTES
+// ===================================================================
 
-//======= SIGNUP ===========
+// ── SIGNUP ──────────────────────────────────────────────────────────
 app.post("/signup", (req, res) => {
   const { userName, phoneNumber, email, dob, password } = req.body;
-  
+
   if (!phoneNumber || !email || !password || !userName || !dob) {
     return res.status(400).json({ error: "Missing required fields" });
   }
-  
-  if(!passSecurityChecker(password)){
-      return res.status(400).json({ error: "Password must contain uppercase, lowercase, number and special character"});
+
+  if (!passSecurityChecker(password)) {
+    return res.status(400).json({
+      error:
+        "Password must contain uppercase, lowercase, number and special character",
+    });
   }
 
   const cleanPhone = scrub(phoneNumber);
 
-  // Check if user already exists
-  if (users.find(u => u.email === email || u.phoneNumber === cleanPhone)) {
+  if (users.find((u) => u.email === email || u.phoneNumber === cleanPhone)) {
     return res.status(400).json({ error: "User already exists" });
   }
 
@@ -56,277 +62,267 @@ app.post("/signup", (req, res) => {
     id: users.length + 1,
     userName,
     email,
-    phoneNumber: cleanPhone, 
+    phoneNumber: cleanPhone,
     dob,
-    password
+    passwordHash: hashPassword(password), // ✅ never store plain text
   };
 
   users.push(newUser);
-  console.log(`User Registered: ${userName} (${cleanPhone})`);
-  
+  console.log(`✅ Registered: ${userName} (${cleanPhone})`);
   res.status(201).json({ message: "User created" });
 });
 
-//============= LOGIN ===========
+// ── LOGIN ────────────────────────────────────────────────────────────
 app.post("/login", (req, res) => {
   const { email, password } = req.body;
-
-  const user = users.find(u => u.email === email && u.password === password);
+  const hash = hashPassword(password);
+  const user = users.find((u) => u.email === email && u.passwordHash === hash);
 
   if (!user) {
     return res.status(401).json({ error: "Invalid credentials or User not Found" });
   }
 
-  const access_token = jwt.sign({ id: user.id }, JWT_SECRET);
-  const refresh_token = jwt.sign({ id: user.id }, JWT_SECRET);
+  const payload = { id: user.id };
+  const access_token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1h" });
+  const refresh_token = jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
 
-  res.json({
-    access_token,
-    refresh_token,
-    user
-  });
+  // Never expose passwordHash in response
+  const { passwordHash, ...safeUser } = user;
+  res.json({ access_token, refresh_token, user: safeUser });
 });
 
-//======= SYNC MULTIPLE CONTACTS ======
+// ── REFRESH TOKEN ────────────────────────────────────────────────────
+app.post("/onechat/refresh", authenticate, (req, res) => {
+  const payload = { id: req.user.id };
+  const access_token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1h" });
+  res.json({ access_token });
+});
+
+// ===================================================================
+//  CONTACT ROUTES
+// ===================================================================
+
 app.post("/sync-contacts", (req, res) => {
   const { contacts } = req.body;
-
-  if (!contacts || !Array.isArray(contacts)) {
+  if (!Array.isArray(contacts)) {
     return res.status(400).json({ error: "Invalid format" });
   }
 
-  // Helper to get only the last 10 digits of a number
-  const getLast10 = (num) => {
-    const cleaned = String(num).replace(/\D/g, '');
-    return cleaned.slice(-10);
-  };
-
-  // Create a Map of the last 10 digits to the actual user object for instant lookup
   const userMap = new Map();
-  users.forEach(u => {
+  users.forEach((u) => {
     const last10 = getLast10(u.phoneNumber);
-    if (last10.length === 10) {
-      userMap.set(last10, u);
-    }
+    if (last10.length === 10) userMap.set(last10, u);
   });
 
   const matched = [];
-  contacts.forEach(contactNum => {
-    const contactLast10 = getLast10(contactNum);
-    if (userMap.has(contactLast10)) {
-      matched.push(userMap.get(contactLast10));
-    }
+  contacts.forEach((c) => {
+    const key = getLast10(c);
+    if (userMap.has(key)) matched.push(userMap.get(key));
   });
 
-  // Remove duplicates from matches
-  const uniqueMatched = [...new Map(matched.map(item => [item.id, item])).values()];
+  const unique = [
+    ...new Map(matched.map((u) => [u.id, u])).values(),
+  ].map(({ passwordHash, ...safe }) => safe); // strip hash
 
-  console.log(`Fast Sync: Scanned ${contacts.length}, Matched ${uniqueMatched.length}`);
-  res.json({ matched_users: uniqueMatched });
+  res.json({ matched_users: unique });
 });
 
-
-//=========== FIND SINGLE USER =========
 app.post("/find-user", (req, res) => {
-  const { contacts } = req.body; 
-
+  const { contacts } = req.body;
   if (!contacts || contacts.length === 0) {
     return res.status(400).json({ error: "No contact provided" });
   }
 
-  const searchNumber = scrub(contacts[0]);
-  const foundUser = users.find(u => u.phoneNumber === searchNumber);
+  const search = scrub(contacts[0]);
+  const found = users.find((u) => u.phoneNumber === search);
 
-  if (!foundUser) {
-    return res.status(404).json({ error: "User not found" });
-  }
+  if (!found) return res.status(404).json({ error: "User not found" });
 
-  // Returning in matched_users array to keep Flutter parsing consistent
-  res.json({ matched_users: [foundUser] }); 
+  const { passwordHash, ...safe } = found;
+  res.json({ matched_users: [safe] });
 });
 
-// ======== EMAIL UPDATES ============
+// ===================================================================
+//  PROFILE UPDATES
+// ===================================================================
 
 app.put("/update-email", authenticate, (req, res) => {
-  const { newEmail } = req.body;
-
-  const user = users.find(u => u.id === req.user.id);
-
-  if (!user) {
-    return res.status(404).json({ error: "User not found" });
-  }
-
-  user.email = newEmail;
-
-  res.json({ message: "Email updated successfully" });
+  const user = users.find((u) => u.id === req.user.id);
+  if (!user) return res.status(404).json({ error: "User not found" });
+  user.email = req.body.newEmail;
+  res.json({ message: "Email updated" });
 });
-//=========== PASSWORD UPDATE =========
+
 app.put("/update-password", authenticate, (req, res) => {
   const { newPassword } = req.body;
-
-  const user = users.find(u => u.id === req.user.id);
-  
-  if(!passSecurityChecker(newPassword)){
-      return res.status(400).json({ error: "Password must contain uppercase, lowercase, number and special character"});
+  if (!passSecurityChecker(newPassword)) {
+    return res.status(400).json({
+      error:
+        "Password must contain uppercase, lowercase, number and special character",
+    });
   }
-
-  if (!user) {
-    return res.status(404).json({ error: "User not found" });
-  }
-
-  user.password = newPassword;
-
-  res.json({ message: "Password updated successfully" });
+  const user = users.find((u) => u.id === req.user.id);
+  if (!user) return res.status(404).json({ error: "User not found" });
+  user.passwordHash = hashPassword(newPassword);
+  res.json({ message: "Password updated" });
 });
 
-// ================= GROUP MANAGEMENT =================
-
-app.post("/onechat/create-group", (req, res) => {
-  const { groupName, members } = req.body;
-
-  const newGroup = {
-    id: uuidv4(),
-    groupName,
-    members
-  };
-
-  groups.push(newGroup);
-  res.status(201).json({ message: "Group created" });
-});
+// ===================================================================
+//  CHAT & MESSAGE HISTORY
+// ===================================================================
 
 app.get("/messages", (req, res) => {
   const { user1, user2 } = req.query;
+  if (!user1 || !user2) return res.status(400).json({ error: "Missing users" });
 
-  if (!user1 || !user2) {
-    return res.status(400).json({ error: "Missing users" });
-  }
-
-  const chat = messages.filter(
-    m =>
-      (m.from === user1 && m.to === user2) ||
-      (m.from === user2 && m.to === user1)
-  );
-
-  // Sort latest first
-  chat.sort((a, b) => new Date(b.time) - new Date(a.time));
+  const chat = messages
+    .filter(
+      (m) =>
+        (m.from === user1 && m.to === user2) ||
+        (m.from === user2 && m.to === user1)
+    )
+    .sort((a, b) => new Date(b.time) - new Date(a.time));
 
   res.json(chat);
 });
 
 app.get("/chat-list/:phone", (req, res) => {
   const myPhone = req.params.phone;
-
   const chatMap = new Map();
 
-  messages.forEach(m => {
+  messages.forEach((m) => {
     if (m.from === myPhone || m.to === myPhone) {
-      const otherUser = m.from === myPhone ? m.to : m.from;
-
-      if (!chatMap.has(otherUser)) {
-        chatMap.set(otherUser, m);
-      } else {
-        const existing = chatMap.get(otherUser);
-
-        // Keep latest message
-        if (new Date(m.time) > new Date(existing.time)) {
-          chatMap.set(otherUser, m);
-        }
+      const other = m.from === myPhone ? m.to : m.from;
+      const existing = chatMap.get(other);
+      if (!existing || new Date(m.time) > new Date(existing.time)) {
+        chatMap.set(other, m);
       }
     }
   });
 
-  const chatList = [];
-
-  chatMap.forEach((msg, user) => {
-    chatList.push({
-      id: user,
-      receiverName: user, // you can replace with real name later
-      receiverNum: user,
+  const list = [];
+  chatMap.forEach((msg, phone) => {
+    list.push({
+      id: phone,
+      receiverName: phone,
+      receiverNum: phone,
       lastMessage: msg.message,
       time: msg.time,
     });
   });
 
-  // Sort latest chats first
-  chatList.sort((a, b) => new Date(b.time) - new Date(a.time));
-
-  res.json(chatList);
+  list.sort((a, b) => new Date(b.time) - new Date(a.time));
+  res.json(list);
 });
 
-// ================= WEBSOCKET LOGIC =================
+// ===================================================================
+//  GROUP MANAGEMENT
+// ===================================================================
+
+app.post("/onechat/create-group", authenticate, (req, res) => {
+  const { groupName, members } = req.body;
+  res.status(201).json({ message: "Group created", id: uuidv4() });
+});
+
+// ===================================================================
+//  HTTP SERVER + WEBSOCKET
+// ===================================================================
 
 const server = app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`🚀 OneChat server running on http://localhost:${PORT}`);
 });
 
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws) => {
-  console.log("WS Client connected");
+  console.log("🔌 WS Client connected");
 
-  ws.on("message", (data) => {
+  ws.on("message", (raw) => {
     try {
-      const msg = JSON.parse(data.toString());
+      const msg = JSON.parse(raw.toString());
 
-      // REGISTER USER SOCKET
+      // ── PING / PONG ────────────────────────────────────────────
+      if (msg.type === "ping") {
+        ws.send(JSON.stringify({ type: "pong" }));
+        return;
+      }
+
+      // ── REGISTER ───────────────────────────────────────────────
       if (msg.type === "register") {
-  try {
-    const decoded = jwt.verify(msg.token, JWT_SECRET);
-    const user = users.find(u => u.id === decoded.id);
+        try {
+          const decoded = jwt.verify(msg.token, JWT_SECRET);
+          const user = users.find((u) => u.id === decoded.id);
+          if (!user) { ws.close(); return; }
 
-    if (!user) return;
+          userSockets[user.phoneNumber] = ws;
+          console.log(`✅ WS Registered: ${user.phoneNumber}`);
+        } catch (_) {
+          ws.close();
+        }
+        return;
+      }
 
-    userSockets[user.phoneNumber] = ws;
-    console.log("Secure WS Registered:", user.phoneNumber);
-  } catch (err) {
-    console.log("Invalid token");
-    ws.close();
-  }
-}
-
-      // SEND MESSAGE
+      // ── OUTGOING MESSAGE ───────────────────────────────────────
       if (msg.type === "message") {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
-const user = users.find(u => u.id === decoded.id);
+        const sender = users.find(
+          (u) => u.id === decoded.id && u.phoneNumber === msg.from
+        );
+        if (!sender) return; // reject spoofed from-phone
 
-if (!user || user.phoneNumber !== msg.from) {
-  return; // ❌ BLOCK FAKE
-}
-  const senderUser = users.find(u => u.phoneNumber === msg.from);
+        const newMsg = {
+          id: msg.id || uuidv4(),
+          from: msg.from,
+          to: msg.to,
+          message: msg.message,
+          msgType: msg.msgType || "text",
+          time: new Date().toISOString(),
+          status: "sent",
+        };
 
-  // Inside wss.on("message", ...) for type === "message"
-const newMsg = {
-    id: msg.id || uuidv4(), // Use Flutter's ID or generate one
-    from: msg.from,
-    to: msg.to,
-    message: msg.message,
-    time: new Date().toISOString(), // Server-authoritative time
-};
+        if (messages.find((m) => m.id === newMsg.id)) return; // dedup
+        messages.push(newMsg);
 
+        const receiverSocket = userSockets[msg.to];
+        if (receiverSocket && receiverSocket.readyState === 1) {
+          receiverSocket.send(JSON.stringify({ type: "message", ...newMsg }));
+        }
+        return;
+      }
 
-  const exists = messages.find(m => m.id === newMsg.id);
-  if (exists) return;
+      // ── STATUS UPDATE (delivered / read) ───────────────────────
+      if (msg.type === "status") {
+        // Update our in-memory record
+        const record = messages.find((m) => m.id === msg.id);
+        if (record) record.status = msg.status;
 
-  messages.push(newMsg);
-
-  const receiverSocket = userSockets[msg.to];
-if (receiverSocket) {
-    receiverSocket.send(JSON.stringify(newMsg));
-}
-}
+        // Forward to the original sender
+        // "msg.to" here is the original sender of the message
+        const senderSocket = userSockets[msg.to];
+        if (senderSocket && senderSocket.readyState === 1) {
+          senderSocket.send(
+            JSON.stringify({
+              type: "status",
+              id: msg.id,
+              status: msg.status,
+            })
+          );
+        }
+        return;
+      }
     } catch (err) {
-      console.log("WS Error:", err);
+      console.error("WS Error:", err.message);
     }
   });
 
   ws.on("close", () => {
-    for (let key in userSockets) {
-      if (userSockets[key] === ws) {
-        delete userSockets[key];
+    // Remove from registry
+    for (const [phone, sock] of Object.entries(userSockets)) {
+      if (sock === ws) {
+        delete userSockets[phone];
+        console.log(`📴 WS Disconnected: ${phone}`);
         break;
       }
     }
-    console.log("WS Client disconnected");
   });
 });
-
